@@ -39,6 +39,17 @@ h2{font-family:var(--display);font-weight:400;font-size:1.6rem;line-height:1.15;
 .hud{display:flex;justify-content:space-between;gap:10px;font-size:.85rem;color:var(--muted);font-variant-numeric:tabular-nums}
 .bar{height:6px;background:var(--line);border-radius:3px;overflow:hidden}
 .bar i{display:block;height:100%;background:var(--red);width:0;transition:width .3s}
+.rules{font-size:.88rem;padding:10px 12px;border-radius:10px;background:var(--goldbg);color:var(--gold)}
+.clock{display:flex;justify-content:space-between;align-items:flex-end;gap:12px}
+.cdwrap,.tot{display:flex;flex-direction:column;line-height:1.1}
+.tot{align-items:flex-end}
+.cdlabel{font-size:.72rem;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);font-weight:700}
+#cd{font-family:var(--display);font-weight:400;font-size:2.6rem;line-height:1;color:var(--green);font-variant-numeric:tabular-nums}
+#cd.warn{color:var(--red)}
+#total{font-family:var(--display);font-weight:400;font-size:1.5rem;font-variant-numeric:tabular-nums}
+.bar i.warn{background:var(--red)}
+.bar i#cdbar{background:var(--green);transition:none}
+.bar i#cdbar.warn{background:var(--red)}
 .opts{display:grid;gap:10px}
 .opt,.who{font:inherit;text-align:left;padding:12px 14px;border-radius:10px;border:1.5px solid var(--line);background:var(--bg);color:var(--fg);cursor:pointer;font-weight:500}
 .opt:hover:not(:disabled),.who:hover{border-color:var(--green)}
@@ -180,37 +191,63 @@ Object.keys(tabs).forEach(t=>$(t).onclick=()=>{
 });
 
 /* ---------- trivia ---------- */
-const stage=$("p-trivia"); let who=null,i=0,score=0,byCat={},t0=0;
+const LIMIT=20; // segundos por pregunta
+const stage=$("p-trivia"); let who=null,i=0,score=0,byCat={},t0=0,qStart=0,tick=null,answered=false,lost={time:0,left:0};
 function pick(){
   const off=official();
   stage.innerHTML=`<div class="card"><span class="tag">Antes de empezar</span><h2>¿Quién eres?</h2>
    <p style="margin:0" class="sub">Busca tu nombre en la lista. Tu calificación aparece en la tabla que ve todo el grupo.</p>
+   <div class="rules"><b>Reglas:</b> tienes ${LIMIT} segundos por pregunta. Si se acaba el tiempo o sales de la página para buscar la respuesta, la pregunta cuenta como error. El cronómetro total sirve para desempatar.</div>
    <div class="whos">${MEMBERS.map((n,k)=>`<button class="who" id="w${k}" data-k="${k}">${esc(n)}${off.has(n)?`<small>Ya contestó: ${off.get(n).aciertos}/${N}</small>`:""}</button>`).join("")}</div></div>`;
   stage.querySelectorAll(".who").forEach(b=>b.onclick=()=>{who=MEMBERS[+b.dataset.k];start();});
 }
-function start(){ i=0;score=0;byCat={};CATS.forEach(c=>byCat[c]=0);t0=Date.now();show(); }
+function start(){ i=0;score=0;byCat={};CATS.forEach(c=>byCat[c]=0);lost={time:0,left:0};t0=Date.now();show(); }
+function stopTick(){ if(tick){clearInterval(tick);tick=null;} }
+function paint(){
+  const now=Date.now(), left=Math.max(0,LIMIT-(now-qStart)/1000);
+  const cd=$("cd"), cb=$("cdbar"), tt=$("total");
+  if(tt) tt.textContent=mmss(Math.floor((now-t0)/1000));
+  if(!cd||answered) return;
+  cd.textContent=Math.ceil(left); cb.style.width=(left/LIMIT*100)+"%";
+  const warn=left<=5; cd.classList.toggle("warn",warn); cb.classList.toggle("warn",warn);
+  if(left<=0) answer(-1,"time");
+}
 function show(){
   if(i>=N) return finish();
-  const q=Q[i];
+  const q=Q[i]; answered=false;
   stage.innerHTML=`<div class="card"><div class="hud"><span>${esc(who)}</span><span>Pregunta ${i+1} de ${N} · ${score} aciertos</span></div>
-   <div class="bar"><i style="width:${i/N*100}%"></i></div>
+   <div class="clock"><div class="cdwrap"><span class="cdlabel">Te quedan</span><b id="cd">${LIMIT}</b><span class="cdlabel">segundos</span></div>
+     <div class="tot"><span class="cdlabel">Cronómetro</span><b id="total">${mmss(Math.floor((Date.now()-t0)/1000))}</b></div></div>
+   <div class="bar"><i id="cdbar" style="width:100%"></i></div>
    <span class="tag">${q.c}</span><h2>${q.q}</h2>
    <div class="opts">${q.o.map((t,k)=>`<button class="opt" id="o${k}" data-k="${k}">${t}</button>`).join("")}</div>
    <div id="after"></div></div>`;
   stage.querySelectorAll(".opt").forEach(b=>b.onclick=()=>answer(+b.dataset.k));
+  qStart=Date.now(); stopTick(); tick=setInterval(paint,100);
 }
-function answer(k){
+function answer(k,why){
+  if(answered) return; answered=true;
   const q=Q[i], ok=k===q.a; if(ok){score++;byCat[q.c]++;}
+  if(why==="time") lost.time++; if(why==="left") lost.left++;
+  const cd=$("cd"); if(cd&&why) cd.textContent="0";
   stage.querySelectorAll(".opt").forEach(b=>{b.disabled=true;const j=+b.dataset.k;if(j===q.a)b.classList.add("ok");else if(j===k)b.classList.add("bad");});
-  $("after").innerHTML=`<div class="fb"><b>${ok?"¡Correcto!":"No. La respuesta es: "+q.o[q.a]+"."}</b>${q.e}</div>
+  const head= why==="time"?"Se acabó el tiempo. La respuesta es: "+q.o[q.a]+"."
+            : why==="left"?"Saliste de la página, cuenta como error. La respuesta es: "+q.o[q.a]+"."
+            : ok?"¡Correcto!":"No. La respuesta es: "+q.o[q.a]+".";
+  $("after").innerHTML=`<div class="fb"><b>${head}</b>${q.e}</div>
    <div class="row" style="margin-top:12px"><button class="btn" id="next">${i===N-1?"Ver resultado":"Siguiente"}</button></div>`;
   const n=$("next"); n.onclick=()=>{i++;show();}; n.focus();
 }
+// Salir de la página durante una pregunta cuenta como error
+document.addEventListener("visibilitychange",()=>{ if(document.hidden && tick && !answered && $("cd")) answer(-1,"left"); });
 async function finish(){
+  stopTick();
   const segundos=Math.round((Date.now()-t0)/1000);
   const first=!official().has(who);
+  const extra=[lost.time?`${lost.time} sin contestar a tiempo`:"",lost.left?`${lost.left} por salir de la página`:""].filter(Boolean).join(" y ");
   stage.innerHTML=`<div class="card"><span class="tag">Resultado de ${esc(who)}</span><div class="score">${score}/${N}</div>
-   <h2>${level(score)}</h2><p style="margin:0" class="sub" id="saveMsg">Guardando tu calificación…</p></div>`;
+   <h2>${level(score)}</h2><p style="margin:0" class="sub">Tiempo total: ${mmss(segundos)}${extra?" · Errores "+extra:""}</p>
+   <p style="margin:0" class="sub" id="saveMsg">Guardando tu calificación…</p></div>`;
   const ok=await save({nombre:who,aciertos:score,total:N,segundos,cats:byCat});
   await load();
   $("saveMsg").textContent=!ok?"No se pudo guardar. Revisa tu conexión y vuelve a jugar."
